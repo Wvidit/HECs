@@ -1,0 +1,6 @@
+ase==3.23.0
+chgnet==0.4.2
+mace-torch==0.3.16
+fairchem-core==1.0.0
+pymatgen==2024.5.1
+torch==2.3.0
