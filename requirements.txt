@@ -1,4 +1,4 @@
-ase==3.23.0
+ase==3.28.0
 chgnet==0.4.2
 mace-torch==0.3.16
 fairchem-core==1.0.0
