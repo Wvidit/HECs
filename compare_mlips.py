@@ -118,6 +118,22 @@ def compute_rmsd(structures_a: list, structures_b: list) -> np.ndarray:
     return np.array(rmsds)
 
 
+def compute_volume_change(structures_relaxed: list, structures_ref: list) -> np.ndarray:
+    """
+    Compute fractional volume change per structure vs a reference set.
+
+    Returns (V_relaxed - V_ref) / V_ref * 100  (in percent).
+    """
+    assert len(structures_relaxed) == len(structures_ref), \
+        f"Trajectory lengths differ: {len(structures_relaxed)} vs {len(structures_ref)}"
+    changes = []
+    for rel, ref in zip(structures_relaxed, structures_ref):
+        v_rel = rel.get_volume()
+        v_ref = ref.get_volume()
+        changes.append((v_rel - v_ref) / v_ref * 100.0)
+    return np.array(changes)
+
+
 # ---------------------------------------------------------------------------
 # Plotting
 # ---------------------------------------------------------------------------
@@ -333,6 +349,101 @@ def plot_summary_table(all_energies, all_volumes, all_forces, outdir):
     print(f"  Saved summary_table.png")
 
 
+def plot_baseline_comparison(
+    all_structures: dict,
+    ref_structures: list,
+    outdir: str,
+):
+    """
+    Compare each MLIP's relaxed structures against the unrelaxed baseline.
+
+    Produces two figures:
+      1. ``baseline_rmsd.png``       — per-MLIP box plot of atomic displacement from baseline
+      2. ``baseline_volume_change.png`` — per-MLIP box plot of volume change (%) vs baseline
+    """
+    plt = setup_matplotlib()
+    labels = list(all_structures.keys())
+    colors = list(plt.cm.Set2(np.linspace(0, 1, len(labels))))
+
+    # --- 1. RMSD from baseline ---
+    rmsd_per_mlip = {}
+    vol_change_per_mlip = {}
+
+    print("\n  MLIP vs Unrelaxed Baseline:")
+    for label, structures in all_structures.items():
+        n = min(len(structures), len(ref_structures))
+        rmsds = compute_rmsd(structures[:n], ref_structures[:n])
+        vol_changes = compute_volume_change(structures[:n], ref_structures[:n])
+        rmsd_per_mlip[label] = rmsds
+        vol_change_per_mlip[label] = vol_changes
+        print(f"    {label}: RMSD from baseline = {np.mean(rmsds):.4f} ± {np.std(rmsds):.4f} Å  |  "
+              f"Volume change = {np.mean(vol_changes):+.3f} ± {np.std(vol_changes):.3f} %")
+
+    # Box plot: RMSD from baseline
+    fig, ax = plt.subplots(figsize=(max(8, 3 * len(labels)), 6))
+    data = [rmsd_per_mlip[lbl] for lbl in labels]
+    bp = ax.boxplot(data, labels=labels, patch_artist=True, notch=False)
+    for patch, color in zip(bp["boxes"], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.7)
+    # Overlay mean markers
+    for i, lbl in enumerate(labels):
+        ax.scatter([i + 1], [np.mean(rmsd_per_mlip[lbl])], color="black",
+                   zorder=5, s=60, marker="D", label="mean" if i == 0 else "")
+    ax.set_xlabel("MLIP")
+    ax.set_ylabel("RMSD from unrelaxed baseline (Å)")
+    ax.set_title("How much did each MLIP move the atoms?\n(RMSD vs unrelaxed structures)")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(os.path.join(outdir, "baseline_rmsd.png"))
+    plt.close(fig)
+    print("    Saved baseline_rmsd.png")
+
+    # Box plot: Volume change from baseline
+    fig, ax = plt.subplots(figsize=(max(8, 3 * len(labels)), 6))
+    data = [vol_change_per_mlip[lbl] for lbl in labels]
+    bp = ax.boxplot(data, labels=labels, patch_artist=True, notch=False)
+    for patch, color in zip(bp["boxes"], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.7)
+    for i, lbl in enumerate(labels):
+        ax.scatter([i + 1], [np.mean(vol_change_per_mlip[lbl])], color="black",
+                   zorder=5, s=60, marker="D", label="mean" if i == 0 else "")
+    ax.axhline(0, color="red", linestyle="--", alpha=0.5, label="no change")
+    ax.set_xlabel("MLIP")
+    ax.set_ylabel("Volume change vs baseline (%)")
+    ax.set_title("Cell volume change after relaxation\n(vs unrelaxed structures)")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(os.path.join(outdir, "baseline_volume_change.png"))
+    plt.close(fig)
+    print("    Saved baseline_volume_change.png")
+
+    # Bar chart: mean RMSD per MLIP (easy at-a-glance)
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    mean_rmsds = [np.mean(rmsd_per_mlip[lbl]) for lbl in labels]
+    std_rmsds  = [np.std(rmsd_per_mlip[lbl])  for lbl in labels]
+    axes[0].bar(labels, mean_rmsds, yerr=std_rmsds, color=colors,
+                alpha=0.8, capsize=5, edgecolor="black", linewidth=0.8)
+    axes[0].set_ylabel("Mean RMSD from baseline (Å)")
+    axes[0].set_title("Atomic displacement from baseline")
+
+    mean_vols = [np.mean(vol_change_per_mlip[lbl]) for lbl in labels]
+    std_vols  = [np.std(vol_change_per_mlip[lbl])  for lbl in labels]
+    axes[1].bar(labels, mean_vols, yerr=std_vols, color=colors,
+                alpha=0.8, capsize=5, edgecolor="black", linewidth=0.8)
+    axes[1].axhline(0, color="red", linestyle="--", alpha=0.5)
+    axes[1].set_ylabel("Mean volume change (%)")
+    axes[1].set_title("Volume change from baseline")
+
+    fig.suptitle("MLIP vs Unrelaxed Baseline", fontsize=15, fontweight="bold")
+    fig.tight_layout()
+    fig.savefig(os.path.join(outdir, "baseline_summary_bars.png"))
+    plt.close(fig)
+    print("    Saved baseline_summary_bars.png")
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -379,8 +490,9 @@ def run_comparison(
         all_structures = {k: v[:min_len] for k, v in all_structures.items()}
 
     # Load reference if provided
+    ref_structures = None
     if reference_file:
-        print(f"\nLoading reference: {reference_file}")
+        print(f"\nLoading reference (unrelaxed baseline): {reference_file}")
         ref_structures = read(reference_file, index=":")
         print(f"  → {len(ref_structures)} structures")
 
@@ -453,6 +565,15 @@ def run_comparison(
         plot_rmsd_comparison(rmsd_data, outdir)
     plot_lattice_comparison(all_lattice, outdir)
     plot_summary_table(all_energies, all_volumes, all_forces, outdir)
+
+    # --- MLIP vs baseline ---
+    if ref_structures is not None:
+        print(f"\n{'═' * 60}")
+        print("MLIP vs UNRELAXED BASELINE")
+        print(f"{'═' * 60}")
+        plot_baseline_comparison(all_structures, ref_structures, outdir)
+    else:
+        print("\n  (Tip: pass --reference structures_unrelaxed.traj to also compare each MLIP against the baseline)")
 
     print(f"\n✓ All plots saved to '{outdir}/'")
 
