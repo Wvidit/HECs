@@ -1,16 +1,12 @@
-# Core
 ase
 numpy
 torch
 
-# MLIP calculators (install the ones you plan to use)
 chgnet
 mace-torch
 fairchem-core
 
-# Materials analysis
 pymatgen
 
-# Utilities
 tqdm
 matplotlib
