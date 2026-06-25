@@ -1,3 +1,6 @@
+# Usage
+# python src/training_ce.py --initialfile 
+
 from ase.io import read
 import argparse
 
